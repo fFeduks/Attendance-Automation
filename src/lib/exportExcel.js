@@ -83,7 +83,16 @@ export async function exportToExcel(students, activeExams, attendanceMap) {
 
   // ── Sheet 2: Misafirler (only if there are guests) ────────────────────────
   if (guestStudents.length > 0) {
-    const ws2 = buildSheet(guestStudents, sortedExams, attendanceMap);
+    // Alphabetical sort by name then surname (Turkish locale, case-insensitive)
+    const sortedGuests = [...guestStudents].sort((a, b) => {
+      const nameA = (a.name || '').toLocaleLowerCase('tr-TR');
+      const nameB = (b.name || '').toLocaleLowerCase('tr-TR');
+      if (nameA !== nameB) return nameA.localeCompare(nameB, 'tr', { sensitivity: 'base' });
+      const surnameA = (a.surname || '').toLocaleLowerCase('tr-TR');
+      const surnameB = (b.surname || '').toLocaleLowerCase('tr-TR');
+      return surnameA.localeCompare(surnameB, 'tr', { sensitivity: 'base' });
+    });
+    const ws2 = buildSheet(sortedGuests, sortedExams, attendanceMap);
     XLSX.utils.book_append_sheet(wb, ws2, 'Misafirler');
   }
 

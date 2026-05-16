@@ -21,9 +21,21 @@ import {
   clearPending,
 } from '../lib/localStorage';
 
+// ─── Turkish-Aware Search Normalizer ─────────────────────────────────────────
+// `toLocaleLowerCase('tr-TR')` is not reliable in all WebView/mobile environments.
+// Instead, we explicitly map all 4 Turkish I variants to a single char so that
+// "zahide" / "zahİde" / "ZAHİDE" / "ZAHIDE" all resolve to the same string.
+function trNormalize(str) {
+  return (str || '')
+    .replace(/İ/g, 'i')   // U+0130 Capital dotted I  → i
+    .replace(/I/g, 'i')   // U+0049 Capital plain I   → i (search-safe equivalence)
+    .replace(/ı/g, 'i')   // U+0131 Lowercase dotless → i (search-safe equivalence)
+    .toLowerCase();        // Handle all remaining characters
+}
+
 // ─── Initial State ────────────────────────────────────────────────────────────
 const initialState = {
-  students:      [],
+  students: [],
   /**
    * students array contains:
    *   - Remote synced students: { id: number, name, surname, is_guest: boolean }
@@ -31,12 +43,12 @@ const initialState = {
    *
    * The attendanceMap uses the student's id (number or UUID string) as the key prefix.
    */
-  exams:         [],
+  exams: [],
   attendanceMap: {},  // { "studentId:examId": true }
-  searchQuery:   '',
-  syncStatus:    'synced',
-  loading:       true,
-  error:         null,
+  searchQuery: '',
+  syncStatus: 'synced',
+  loading: true,
+  error: null,
 };
 
 // ─── Reducer ──────────────────────────────────────────────────────────────────
@@ -46,11 +58,11 @@ function reducer(state, action) {
     case 'SET_INIT_DATA':
       return {
         ...state,
-        students:      action.students,
-        exams:         action.exams,
+        students: action.students,
+        exams: action.exams,
         attendanceMap: action.attendanceMap,
-        loading:       false,
-        syncStatus:    action.hasPending ? 'local' : 'synced',
+        loading: false,
+        syncStatus: action.hasPending ? 'local' : 'synced',
       };
 
     case 'SET_SEARCH':
@@ -71,18 +83,18 @@ function reducer(state, action) {
     case 'ADD_GUEST_STUDENT': {
       // Add as a pending local student with UUID id
       const newStudent = {
-        id:         action._localId,
-        name:       action.name,
-        surname:    action.surname,
-        is_guest:   true,
+        id: action._localId,
+        name: action.name,
+        surname: action.surname,
+        is_guest: true,
         _isPending: true,
       };
       const key = getAttendanceKey(action._localId, action.examId);
       return {
         ...state,
-        students:      [...state.students, newStudent],
+        students: [...state.students, newStudent],
         attendanceMap: { ...state.attendanceMap, [key]: true },
-        syncStatus:    'local',
+        syncStatus: 'local',
       };
     }
 
@@ -108,9 +120,9 @@ function reducer(state, action) {
       });
       return {
         ...state,
-        students:      newStudents,
+        students: newStudents,
         attendanceMap: action.newAttendanceMap,
-        syncStatus:    'synced',
+        syncStatus: 'synced',
       };
     }
 
@@ -146,16 +158,16 @@ export function AttendanceProvider({ children }) {
   // ── Bootstrap: localStorage first, then Supabase merge ──────────────────
   useEffect(() => {
     async function init() {
-      const localMap     = loadAttendanceMap();
-      const pendingDels  = loadPendingDeletes();
+      const localMap = loadAttendanceMap();
+      const pendingDels = loadPendingDeletes();
       const pendingGuests = loadPendingGuests();
 
       // Reconstruct pending guest students as local student objects
       const localGuestStudents = pendingGuests.map(pg => ({
-        id:         pg._localId,
-        name:       pg.name,
-        surname:    pg.surname,
-        is_guest:   true,
+        id: pg._localId,
+        name: pg.name,
+        surname: pg.surname,
+        is_guest: true,
         _isPending: true,
       }));
 
@@ -189,7 +201,7 @@ export function AttendanceProvider({ children }) {
 
         dispatch({
           type: 'SET_INIT_DATA',
-          students:      allStudents,
+          students: allStudents,
           exams,
           attendanceMap: mergedMap,
           hasPending,
@@ -202,10 +214,10 @@ export function AttendanceProvider({ children }) {
         // Offline: show only pending local data
         dispatch({
           type: 'SET_INIT_DATA',
-          students:      localGuestStudents,
-          exams:         [],
+          students: localGuestStudents,
+          exams: [],
           attendanceMap: localMap,
-          hasPending:    pendingDels.length > 0 || pendingGuests.length > 0,
+          hasPending: pendingDels.length > 0 || pendingGuests.length > 0,
         });
       }
     }
@@ -253,11 +265,15 @@ export function AttendanceProvider({ children }) {
     const _localId = crypto.randomUUID();
     const examIdNum = Number(examId);
 
+    // Normalize: uppercase with Turkish locale before persisting
+    const formattedName = name.trim().toLocaleUpperCase('tr-TR');
+    const formattedSurname = surname.trim().toLocaleUpperCase('tr-TR');
+
     // Persist to localStorage
     const existing = loadPendingGuests();
-    savePendingGuests([...existing, { _localId, name, surname, exam_id: examIdNum }]);
+    savePendingGuests([...existing, { _localId, name: formattedName, surname: formattedSurname, exam_id: examIdNum }]);
 
-    dispatch({ type: 'ADD_GUEST_STUDENT', _localId, name, surname, examId: examIdNum });
+    dispatch({ type: 'ADD_GUEST_STUDENT', _localId, name: formattedName, surname: formattedSurname, examId: examIdNum });
   }, []);
 
   // ── Remove a guest student ────────────────────────────────────────────────
@@ -359,12 +375,20 @@ export function AttendanceProvider({ children }) {
 
   // ── Derived values ────────────────────────────────────────────────────────
   // filteredStudents includes ALL students (regular + guests) filtered by search
+  // Arama için en güvenli Türkçe normalize fonksiyonu
+  const trNormalize = (text) => {
+    if (!text) return '';
+    return text.toLocaleUpperCase('tr-TR');
+  };
+
+  // ── Derived values ────────────────────────────────────────────────────────
   const filteredStudents = state.students.filter(s => {
     if (!state.searchQuery.trim()) return true;
-    const q = state.searchQuery.toLowerCase();
+
+    const q = trNormalize(state.searchQuery);
     return (
-      s.name.toLowerCase().includes(q) ||
-      s.surname.toLowerCase().includes(q)
+      trNormalize(s.name).includes(q) ||
+      trNormalize(s.surname).includes(q)
     );
   });
 

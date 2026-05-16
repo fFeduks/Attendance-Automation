@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { Search, UserPlus, Download, Save, X, Check, Trash2, Loader2 } from 'lucide-react';
 import { useAttendance } from '../store/useAttendanceStore';
 import { getAttendanceKey } from '../lib/localStorage';
@@ -18,6 +18,9 @@ export default function AttendancePage() {
   const [confirmRemoveGuest, setConfirmRemoveGuest] = useState(null);
   const [showGuestModal,     setShowGuestModal]     = useState(false);
   const [exporting,          setExporting]          = useState(false);
+
+  // Auto-clear: when user blurs the search box and later refocuses, start fresh
+  const shouldClearOnFocus = useRef(false);
 
   const handleToggle = (student, exam) => {
     const key = getAttendanceKey(student.id, exam.id);
@@ -123,12 +126,27 @@ export default function AttendancePage() {
             type="text"
             value={searchQuery}
             onChange={e => setSearch(e.target.value)}
+            onBlur={() => {
+              // Mark that next focus should clear the field
+              if (searchQuery.trim()) shouldClearOnFocus.current = true;
+            }}
+            onFocus={() => {
+              if (shouldClearOnFocus.current) {
+                shouldClearOnFocus.current = false;
+                setSearch('');
+              }
+            }}
             placeholder="Öğrenci ara... (misafirler dahil)"
             className="input-field pl-9 pr-9 text-sm"
           />
           {searchQuery && (
             <button
-              onClick={() => setSearch('')}
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                setSearch('');
+                shouldClearOnFocus.current = false;
+              }}
               className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300"
               aria-label="Aramayı temizle"
             >

@@ -12,8 +12,11 @@ export default function AddGuestModal({ onClose }) {
   const handleSubmit = (e) => {
     e.preventDefault();
     if (!name.trim() || !surname.trim() || !examId) return;
+    // Normalize to Turkish uppercase before saving
+    const formattedName    = name.trim().toLocaleUpperCase('tr-TR');
+    const formattedSurname = surname.trim().toLocaleUpperCase('tr-TR');
     // addGuest handles both inserting the student and marking attendance
-    addGuest(name.trim(), surname.trim(), examId);
+    addGuest(formattedName, formattedSurname, examId);
     onClose();
   };
 
