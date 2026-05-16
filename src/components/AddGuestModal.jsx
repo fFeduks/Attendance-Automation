@@ -25,15 +25,12 @@ export default function AddGuestModal({ onClose }) {
       <div className="modal-panel" onClick={e => e.stopPropagation()}>
 
         {/* Header */}
-        <div className="flex items-center gap-3 mb-5">
+        <div className="flex items-center gap-3 mb-3">
           <div className="w-10 h-10 rounded-full bg-indigo-900/60 flex items-center justify-center flex-shrink-0">
             <UserPlus size={18} className="text-indigo-400" />
           </div>
           <div className="flex-1">
-            <h2 className="text-white font-semibold text-lg leading-tight">Hızlı Öğrenci Ekle</h2>
-            <p className="text-slate-400 text-xs mt-0.5">
-              Listede olmayan öğrenci — sınav yoklaması otomatik alınır
-            </p>
+            <h2 className="text-white font-semibold text-lg leading-tight">Öğrenci Ekle</h2>
           </div>
           <button
             onClick={onClose}
@@ -44,19 +41,11 @@ export default function AddGuestModal({ onClose }) {
           </button>
         </div>
 
-        {/* Auto-attendance notice */}
-        <div className="flex items-start gap-2 bg-emerald-900/20 border border-emerald-800/40 rounded-xl px-3 py-2.5 mb-4">
-          <CheckCircle size={15} className="text-emerald-400 flex-shrink-0 mt-0.5" />
-          <p className="text-emerald-300 text-xs leading-relaxed">
-            Seçilen sınavın yoklaması bu öğrenci için <strong>otomatik olarak işaretlenecek</strong>.
-          </p>
-        </div>
-
-        <form onSubmit={handleSubmit} className="space-y-3">
+        <form onSubmit={handleSubmit} className="space-y-2">
 
           {/* Name */}
           <div>
-            <label htmlFor="guest-name" className="block text-sm text-slate-400 mb-1.5 font-medium">
+            <label htmlFor="guest-name" className="block text-xs text-slate-400 mb-1 font-medium">
               Ad
             </label>
             <input
@@ -73,7 +62,7 @@ export default function AddGuestModal({ onClose }) {
 
           {/* Surname */}
           <div>
-            <label htmlFor="guest-surname" className="block text-sm text-slate-400 mb-1.5 font-medium">
+            <label htmlFor="guest-surname" className="block text-xs text-slate-400 mb-1 font-medium">
               Soyad
             </label>
             <input
@@ -90,7 +79,7 @@ export default function AddGuestModal({ onClose }) {
           {/* Exam selector */}
           {activeExams.length > 0 ? (
             <div>
-              <label htmlFor="guest-exam" className="block text-sm text-slate-400 mb-1.5 font-medium">
+              <label htmlFor="guest-exam" className="block text-xs text-slate-400 mb-1 font-medium">
                 Sınav
               </label>
               <select
@@ -114,7 +103,7 @@ export default function AddGuestModal({ onClose }) {
           )}
 
           {/* Actions */}
-          <div className="flex gap-3 pt-2">
+          <div className="flex gap-3 mt-4">
             <button type="button" onClick={onClose} className="btn-ghost flex-1">
               İptal
             </button>
@@ -125,7 +114,7 @@ export default function AddGuestModal({ onClose }) {
               disabled={!name.trim() || !surname.trim() || !examId}
             >
               <UserPlus size={16} />
-              Ekle &amp; Yokla
+              Ekle
             </button>
           </div>
 

@@ -150,13 +150,13 @@ body {
 
 /* ─── Modal Backdrop ─────────────────────────────────────────────────── */
 .modal-backdrop {
-  @apply fixed inset-0 z-50 flex items-end sm:items-center justify-center
+  @apply fixed inset-0 z-50 flex items-start pt-8 sm:pt-0 sm:items-center justify-center
          bg-black/70 backdrop-blur-sm;
   animation: fadeIn 0.07s ease-out;
 }
 
 .modal-panel {
-  @apply w-full max-w-sm mx-4 mb-8 sm:mb-0 bg-slate-900 border border-slate-800 rounded-2xl p-6;
+  @apply w-full max-w-sm mx-4 bg-slate-900 border border-slate-800 rounded-2xl p-4 sm:p-6;
   animation: slideUp 0.1s ease-out;
 }
 
