@@ -1,47 +1,58 @@
 import React, { useState, useRef } from 'react';
-import { Search, UserPlus, Download, Save, X, Check, Trash2, Loader2 } from 'lucide-react';
+import { Search, UserPlus, Download, Save, X, Check, Trash2, Loader2, Undo } from 'lucide-react';
 import { useAttendance } from '../store/useAttendanceStore';
 import { getAttendanceKey } from '../lib/localStorage';
 import { exportToExcel } from '../lib/exportExcel';
-import ConfirmModal from '../components/ConfirmModal';
 import AddGuestModal from '../components/AddGuestModal';
 import SyncStatus from '../components/SyncStatus';
 
 export default function AttendancePage() {
   const {
-    filteredStudents, activeExams, attendanceMap,
+    filteredStudents, activeExams, attendanceMap, dbAttendanceMap,
     students, searchQuery, syncStatus, loading,
-    setSearch, toggleAttendance, syncToSupabase, removeGuest,
+    setSearch, toggleAttendance, syncToSupabase, removeGuest, discardChanges,
   } = useAttendance();
 
-  const [confirmState,       setConfirmState]       = useState(null);
   const [confirmRemoveGuest, setConfirmRemoveGuest] = useState(null);
+  const [confirmDiscard,     setConfirmDiscard]     = useState(false);
   const [showGuestModal,     setShowGuestModal]     = useState(false);
   const [exporting,          setExporting]          = useState(false);
+  const [pendingDeleteKey,   setPendingDeleteKey]   = useState(null);
 
   // Auto-clear: when user blurs the search box and later refocuses, start fresh
   const shouldClearOnFocus = useRef(false);
+  const deleteTimeoutRef   = useRef(null);
 
   const handleToggle = (student, exam) => {
     const key = getAttendanceKey(student.id, exam.id);
-    if (attendanceMap[key]) {
-      setConfirmState({
-        studentId:   student.id,
-        examId:      exam.id,
-        studentName: `${student.name} ${student.surname}`,
-        examName:    exam.exam_name,
-      });
-    } else {
+    const isMarked = !!attendanceMap[key];
+    const isSaved  = !!dbAttendanceMap[key];
+
+    if (!isMarked) {
+      // Absent -> Unsaved (Yellow)
       toggleAttendance(student.id, exam.id);
+    } else if (isMarked && !isSaved) {
+      // Unsaved (Yellow) -> Absent (Gray)
+      toggleAttendance(student.id, exam.id);
+    } else {
+      // Saved (Green)
+      if (pendingDeleteKey !== key) {
+        // First click: Ask for confirmation inline
+        setPendingDeleteKey(key);
+        if (deleteTimeoutRef.current) clearTimeout(deleteTimeoutRef.current);
+        deleteTimeoutRef.current = setTimeout(() => {
+          setPendingDeleteKey(null);
+        }, 3000);
+      } else {
+        // Second click: Confirmed
+        if (deleteTimeoutRef.current) clearTimeout(deleteTimeoutRef.current);
+        setPendingDeleteKey(null);
+        toggleAttendance(student.id, exam.id);
+      }
     }
   };
 
-  const handleConfirmRemove = () => {
-    if (confirmState) {
-      toggleAttendance(confirmState.studentId, confirmState.examId);
-      setConfirmState(null);
-    }
-  };
+
 
   const handleConfirmRemoveGuest = async () => {
     if (confirmRemoveGuest) {
@@ -54,7 +65,7 @@ export default function AttendancePage() {
     if (exporting) return;
     setExporting(true);
     try {
-      await exportToExcel(students, activeExams, attendanceMap);
+      await exportToExcel(students, activeExams, dbAttendanceMap);
     } finally {
       setTimeout(() => setExporting(false), 1000);
     }
@@ -224,6 +235,8 @@ export default function AttendancePage() {
                     isEven={idx % 2 === 0}
                     activeExams={activeExams}
                     attendanceMap={attendanceMap}
+                    dbAttendanceMap={dbAttendanceMap}
+                    pendingDeleteKey={pendingDeleteKey}
                     onToggle={handleToggle}
                     onRemoveGuest={s => setConfirmRemoveGuest({
                       studentId:   s.id,
@@ -248,31 +261,33 @@ export default function AttendancePage() {
           <div className="flex-1 min-w-0">
             <SyncStatus status={syncStatus} />
           </div>
-          <button
-            id="save-btn"
-            onClick={syncToSupabase}
-            disabled={syncStatus === 'syncing' || syncStatus === 'synced'}
-            className="btn-primary px-5 flex-shrink-0"
-          >
-            <Save size={15} />
-            Kaydet
-          </button>
+          <div className="flex gap-2">
+            {syncStatus === 'local' && (
+              <button
+                id="discard-btn"
+                onClick={() => setConfirmDiscard(true)}
+                className="btn-ghost px-3 sm:px-4 flex-shrink-0 text-red-400 hover:text-red-300 hover:bg-red-900/30"
+              >
+                <Undo size={15} />
+                <span className="hidden sm:inline">Vazgeç</span>
+              </button>
+            )}
+            <button
+              id="save-btn"
+              onClick={syncToSupabase}
+              disabled={syncStatus === 'syncing' || syncStatus === 'synced'}
+              className="btn-primary px-4 sm:px-5 flex-shrink-0"
+            >
+              <Save size={15} />
+              Kaydet
+            </button>
+          </div>
         </div>
       </footer>
 
       {/* ═══════════════════════════════════════════════
           MODALS
       ═══════════════════════════════════════════════ */}
-
-      {/* Uncheck attendance confirmation */}
-      {confirmState && (
-        <ConfirmModal
-          studentName={confirmState.studentName}
-          examName={confirmState.examName}
-          onConfirm={handleConfirmRemove}
-          onCancel={() => setConfirmState(null)}
-        />
-      )}
 
       {/* Remove guest confirmation */}
       {confirmRemoveGuest && (
@@ -302,6 +317,33 @@ export default function AttendancePage() {
         </div>
       )}
 
+      {/* Discard confirmation */}
+      {confirmDiscard && (
+        <div className="modal-backdrop" onClick={() => setConfirmDiscard(false)}>
+          <div className="modal-panel" onClick={e => e.stopPropagation()}>
+            <div className="flex items-start gap-3 mb-4">
+              <div className="w-10 h-10 rounded-full bg-red-900/40 flex items-center justify-center flex-shrink-0">
+                <Undo size={18} className="text-red-400" />
+              </div>
+              <div className="flex-1">
+                <h2 className="text-white font-semibold">Değişikliklerden Vazgeç</h2>
+                <p className="text-slate-400 text-sm mt-1">
+                  Emin misiniz? Henüz kaydedilmeyen tüm yoklama değişiklikleri silinecek ve veritabanındaki haline geri dönülecek.
+                </p>
+              </div>
+            </div>
+            <div className="flex gap-3">
+              <button onClick={() => setConfirmDiscard(false)} className="btn-ghost flex-1">
+                İptal
+              </button>
+              <button onClick={() => { discardChanges(); setConfirmDiscard(false); }} className="btn-danger flex-1">
+                <Undo size={14} /> Evet, Vazgeç
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showGuestModal && <AddGuestModal onClose={() => setShowGuestModal(false)} />}
     </div>
   );
@@ -310,7 +352,7 @@ export default function AttendancePage() {
 /* ═══════════════════════════════════════════════════════════════════════════
    STUDENT ROW — ultra-compact, zebra-striped
 ═══════════════════════════════════════════════════════════════════════════ */
-function StudentRow({ student, isEven, activeExams, attendanceMap, onToggle, onRemoveGuest }) {
+function StudentRow({ student, isEven, activeExams, attendanceMap, dbAttendanceMap, pendingDeleteKey, onToggle, onRemoveGuest }) {
   const isGuest   = !!student.is_guest;
   const isPending = !!student._isPending;
 
@@ -359,7 +401,28 @@ function StudentRow({ student, isEven, activeExams, attendanceMap, onToggle, onR
       {/* ── Exam Toggle Cells ─────────────────────────────────────────── */}
       {activeExams.map(exam => {
         const key       = getAttendanceKey(student.id, exam.id);
-        const isPresent = !!attendanceMap[key];
+        const isMarked  = !!attendanceMap[key];
+        const isSaved   = !!dbAttendanceMap[key];
+        const isPendingDelete = pendingDeleteKey === key;
+
+        let btnClass = 'bg-slate-800 border border-slate-700 text-slate-600'; // Absent
+        let Icon = null;
+
+        if (isMarked) {
+          if (!isSaved) {
+            // Unsaved (Yellow)
+            btnClass = 'bg-amber-500 text-white shadow-md shadow-amber-900/50';
+            Icon = <Check size={16} strokeWidth={2.5} />;
+          } else if (isPendingDelete) {
+            // Pending Delete (Red)
+            btnClass = 'bg-red-500 text-white shadow-md shadow-red-900/50 animate-pulse';
+            Icon = <X size={16} strokeWidth={3} />;
+          } else {
+            // Saved (Green)
+            btnClass = 'bg-emerald-500 text-white shadow-md shadow-emerald-900/50';
+            Icon = <Check size={16} strokeWidth={2.5} />;
+          }
+        }
 
         return (
           <td
@@ -369,17 +432,12 @@ function StudentRow({ student, isEven, activeExams, attendanceMap, onToggle, onR
             <button
               id={`toggle-${student.id}-${exam.id}`}
               onClick={() => onToggle(student, exam)}
-              aria-label={`${exam.exam_name}: ${isPresent ? 'Katıldı' : 'Katılmadı'}`}
-              aria-pressed={isPresent}
+              aria-label={`${exam.exam_name}: ${isMarked ? 'Katıldı' : 'Katılmadı'}`}
+              aria-pressed={isMarked}
               title={`${student.name} ${student.surname} — ${exam.exam_name}`}
-              className={`w-10 h-10 rounded-xl mx-auto flex items-center justify-center
-                transition-transform duration-75 active:scale-90
-                ${isPresent
-                  ? 'bg-emerald-500 text-white shadow-md shadow-emerald-900/50'
-                  : 'bg-slate-800 border border-slate-700 text-slate-600'
-                }`}
+              className={`w-10 h-10 rounded-xl mx-auto flex items-center justify-center active:scale-90 ${btnClass}`}
             >
-              {isPresent && <Check size={16} strokeWidth={2.5} />}
+              {Icon}
             </button>
           </td>
         );

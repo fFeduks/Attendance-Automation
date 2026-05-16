@@ -3,6 +3,7 @@ const KEYS = {
   ATTENDANCE:      'yks_attendance',
   PENDING_DELETE:  'yks_pending_delete',
   PENDING_GUESTS:  'yks_pending_guests',
+  EXAM_ORDER:      'yks_exam_order',
 };
 
 // ─── Internal Helpers ─────────────────────────────────────────────────────────
@@ -67,4 +68,14 @@ export function savePendingGuests(guests) {
 export function clearPending() {
   localStorage.removeItem(KEYS.PENDING_DELETE);
   localStorage.removeItem(KEYS.PENDING_GUESTS);
+}
+
+// ─── Exam Order ───────────────────────────────────────────────────────────────
+// Array of exam IDs in sorted order
+export function loadExamOrder() {
+  return load(KEYS.EXAM_ORDER) || [];
+}
+
+export function saveExamOrder(order) {
+  save(KEYS.EXAM_ORDER, order);
 }

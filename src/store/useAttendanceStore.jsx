@@ -19,6 +19,8 @@ import {
   loadPendingGuests,
   savePendingGuests,
   clearPending,
+  loadExamOrder,
+  saveExamOrder,
 } from '../lib/localStorage';
 
 // ─── Turkish-Aware Search Normalizer ─────────────────────────────────────────
@@ -44,26 +46,43 @@ const initialState = {
    * The attendanceMap uses the student's id (number or UUID string) as the key prefix.
    */
   exams: [],
-  attendanceMap: {},  // { "studentId:examId": true }
+  attendanceMap: {},  // { "studentId:examId": true } (local + remote)
+  dbAttendanceMap: {}, // { "studentId:examId": true } (verified remote only)
   searchQuery: '',
   syncStatus: 'synced',
   loading: true,
   error: null,
 };
 
+// ─── Helper to Sort Exams ───────────────────────────────────────────────────────
+function sortExams(exams, orderMap) {
+  // orderMap is an array of exam ids. We sort by indexOf. If not found, put it at the end.
+  return [...exams].sort((a, b) => {
+    const iA = orderMap.indexOf(a.id);
+    const iB = orderMap.indexOf(b.id);
+    if (iA !== -1 && iB !== -1) return iA - iB;
+    if (iA !== -1) return -1;
+    if (iB !== -1) return 1;
+    return a.id - b.id; // stable sort for new exams
+  });
+}
+
 // ─── Reducer ──────────────────────────────────────────────────────────────────
 function reducer(state, action) {
   switch (action.type) {
 
-    case 'SET_INIT_DATA':
+    case 'SET_INIT_DATA': {
+      const order = loadExamOrder();
       return {
         ...state,
         students: action.students,
-        exams: action.exams,
+        exams: sortExams(action.exams, order),
         attendanceMap: action.attendanceMap,
+        dbAttendanceMap: action.dbAttendanceMap,
         loading: false,
         syncStatus: action.hasPending ? 'local' : 'synced',
       };
+    }
 
     case 'SET_SEARCH':
       return { ...state, searchQuery: action.query };
@@ -122,6 +141,7 @@ function reducer(state, action) {
         ...state,
         students: newStudents,
         attendanceMap: action.newAttendanceMap,
+        dbAttendanceMap: action.newAttendanceMap,
         syncStatus: 'synced',
       };
     }
@@ -129,8 +149,22 @@ function reducer(state, action) {
     case 'SET_SYNC_STATUS':
       return { ...state, syncStatus: action.status };
 
-    case 'ADD_EXAM':
-      return { ...state, exams: [...state.exams, action.exam] };
+    case 'ADD_EXAM': {
+      const newExams = [...state.exams, action.exam];
+      saveExamOrder(newExams.map(e => e.id));
+      return { ...state, exams: newExams };
+    }
+
+    case 'REORDER_EXAMS': {
+      const { oldIndex, newIndex } = action;
+      const newExams = [...state.exams];
+      const [removed] = newExams.splice(oldIndex, 1);
+      newExams.splice(newIndex, 0, removed);
+      
+      // Save new order to local storage
+      saveExamOrder(newExams.map(e => e.id));
+      return { ...state, exams: newExams };
+    }
 
     case 'UPDATE_EXAM_ACTIVE':
       return {
@@ -204,6 +238,7 @@ export function AttendanceProvider({ children }) {
           students: allStudents,
           exams,
           attendanceMap: mergedMap,
+          dbAttendanceMap: remoteMap,
           hasPending,
         });
 
@@ -217,6 +252,7 @@ export function AttendanceProvider({ children }) {
           students: localGuestStudents,
           exams: [],
           attendanceMap: localMap,
+          dbAttendanceMap: localMap, // Fallback: assume local was synced previously
           hasPending: pendingDels.length > 0 || pendingGuests.length > 0,
         });
       }
@@ -357,11 +393,49 @@ export function AttendanceProvider({ children }) {
     }
   }, [state.attendanceMap]);
 
+  // ── Discard local changes and re-fetch from Supabase ──────────────────────
+  const discardChanges = useCallback(async () => {
+    dispatch({ type: 'SET_SYNC_STATUS', status: 'syncing' });
+    try {
+      clearPending();
+      
+      const [remoteStudents, exams, remoteAttendance] = await Promise.all([
+        fetchStudents(),
+        fetchExams(),
+        fetchAttendance(),
+      ]);
+
+      const remoteMap = {};
+      remoteAttendance.forEach(a => {
+        remoteMap[getAttendanceKey(a.student_id, a.exam_id)] = true;
+      });
+
+      saveAttendanceMap(remoteMap);
+
+      dispatch({
+        type: 'SET_INIT_DATA',
+        students: remoteStudents,
+        exams,
+        attendanceMap: remoteMap,
+        dbAttendanceMap: remoteMap,
+        hasPending: false,
+      });
+
+    } catch (err) {
+      console.error('Discard failed:', err);
+      dispatch({ type: 'SET_SYNC_STATUS', status: 'error' });
+    }
+  }, []);
+
   // ── Exam management ───────────────────────────────────────────────────────
   const addExam = useCallback(async (examName) => {
     const exam = await insertExam(examName);
     dispatch({ type: 'ADD_EXAM', exam });
     return exam;
+  }, []);
+
+  const reorderExams = useCallback((oldIndex, newIndex) => {
+    dispatch({ type: 'REORDER_EXAMS', oldIndex, newIndex });
   }, []);
 
   const toggleExamActive = useCallback(async (id, is_active) => {
@@ -403,8 +477,10 @@ export function AttendanceProvider({ children }) {
     addGuest,
     removeGuest,
     addExam,
+    reorderExams,
     toggleExamActive,
     setSearch,
+    discardChanges,
   };
 
   return (

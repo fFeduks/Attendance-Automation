@@ -1,13 +1,36 @@
 import React, { useState } from 'react';
-import { Plus, ToggleLeft, ToggleRight, BookOpen, Loader2, AlertCircle } from 'lucide-react';
+import { Plus, ToggleLeft, ToggleRight, BookOpen, Loader2, AlertCircle, GripVertical } from 'lucide-react';
 import { useAttendance } from '../store/useAttendanceStore';
+import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
+import { SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy, useSortable } from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 
 export default function ManagementPage() {
-  const { exams, addExam, toggleExamActive } = useAttendance();
+  const { exams, addExam, toggleExamActive, reorderExams } = useAttendance();
   const [examName, setExamName] = useState('');
   const [adding, setAdding]     = useState(false);
   const [error, setError]       = useState(null);
   const [togglingId, setTogglingId] = useState(null);
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: {
+        distance: 5, // prevents accidental drag when tapping
+      },
+    }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    })
+  );
+
+  const handleDragEnd = (event) => {
+    const { active, over } = event;
+    if (over && active.id !== over.id) {
+      const oldIndex = exams.findIndex((e) => e.id === active.id);
+      const newIndex = exams.findIndex((e) => e.id === over.id);
+      reorderExams(oldIndex, newIndex);
+    }
+  };
 
   const handleAddExam = async (e) => {
     e.preventDefault();
@@ -113,16 +136,27 @@ export default function ManagementPage() {
               </p>
             </div>
           ) : (
-            <div className="space-y-2">
-              {exams.map(exam => (
-                <ExamRow
-                  key={exam.id}
-                  exam={exam}
-                  toggling={togglingId === exam.id}
-                  onToggle={handleToggleActive}
-                />
-              ))}
-            </div>
+            <DndContext 
+              sensors={sensors}
+              collisionDetection={closestCenter}
+              onDragEnd={handleDragEnd}
+            >
+              <SortableContext 
+                items={exams.map(e => e.id)}
+                strategy={verticalListSortingStrategy}
+              >
+                <div className="space-y-2">
+                  {exams.map(exam => (
+                    <SortableExamRow
+                      key={exam.id}
+                      exam={exam}
+                      toggling={togglingId === exam.id}
+                      onToggle={handleToggleActive}
+                    />
+                  ))}
+                </div>
+              </SortableContext>
+            </DndContext>
           )}
         </div>
       </div>
@@ -131,9 +165,35 @@ export default function ManagementPage() {
 }
 
 // ── Exam Row ────────────────────────────────────────────────────────────────
-function ExamRow({ exam, toggling, onToggle }) {
+function SortableExamRow({ exam, toggling, onToggle }) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: exam.id });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+    position: 'relative',
+    zIndex: isDragging ? 1 : 0,
+  };
+
   return (
-    <div className="card px-4 py-3 flex items-center gap-3 transition-all duration-200">
+    <div ref={setNodeRef} style={style} className="card px-4 py-3 flex items-center gap-3 transition-all duration-200">
+      {/* Drag Handle */}
+      <div 
+        {...attributes} 
+        {...listeners} 
+        className="cursor-grab active:cursor-grabbing text-slate-500 hover:text-slate-300 p-1 -ml-2 touch-none"
+      >
+        <GripVertical size={18} />
+      </div>
+
       {/* Status dot */}
       <div
         className={`w-2.5 h-2.5 rounded-full flex-shrink-0 transition-colors duration-300 ${

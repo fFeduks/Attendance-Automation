@@ -64,10 +64,8 @@ function buildSheet(students, sortedExams, attendanceMap) {
  * @param {Object} attendanceMap - { "studentId:examId": true }
  */
 export async function exportToExcel(students, activeExams, attendanceMap) {
-  // Sort exams alphabetically so TYT/AYT variants stay grouped
-  const sortedExams = [...activeExams].sort((a, b) =>
-    a.exam_name.localeCompare(b.exam_name, 'tr', { sensitivity: 'base' })
-  );
+  // Use the custom exam order provided by state
+  const orderedExams = [...activeExams];
 
   // Split students by type
   // Exclude _isPending guests (no real DB id, their attendance key is a UUID)
@@ -78,7 +76,7 @@ export async function exportToExcel(students, activeExams, attendanceMap) {
   const wb = XLSX.utils.book_new();
 
   // ── Sheet 1: Ana Liste ────────────────────────────────────────────────────
-  const ws1 = buildSheet(regularStudents, sortedExams, attendanceMap);
+  const ws1 = buildSheet(regularStudents, orderedExams, attendanceMap);
   XLSX.utils.book_append_sheet(wb, ws1, 'Ana Liste');
 
   // ── Sheet 2: Misafirler (only if there are guests) ────────────────────────
@@ -92,7 +90,7 @@ export async function exportToExcel(students, activeExams, attendanceMap) {
       const surnameB = (b.surname || '').toLocaleLowerCase('tr-TR');
       return surnameA.localeCompare(surnameB, 'tr', { sensitivity: 'base' });
     });
-    const ws2 = buildSheet(sortedGuests, sortedExams, attendanceMap);
+    const ws2 = buildSheet(sortedGuests, orderedExams, attendanceMap);
     XLSX.utils.book_append_sheet(wb, ws2, 'Misafirler');
   }
 
