@@ -1,0 +1,178 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ─── CSS Custom Properties ─────────────────────────────────────────── */
+:root {
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+/* ─── Base Reset ─────────────────────────────────────────────────────── */
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-tap-highlight-color: transparent;
+  scroll-behavior: smooth;
+}
+
+body {
+  @apply bg-slate-950 text-white font-sans m-0 p-0;
+  height: 100dvh;
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
+#root {
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* ─── Scrollbar Styling ──────────────────────────────────────────────── */
+::-webkit-scrollbar {
+  width: 4px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  @apply bg-slate-700 rounded-full;
+}
+
+/* ─── Component Classes ──────────────────────────────────────────────── */
+@layer components {
+  .btn-primary {
+    @apply bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700
+           text-white font-semibold rounded-xl px-5 py-3
+           transition-all duration-200 ease-out
+           focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:ring-offset-2 focus:ring-offset-slate-900
+           disabled:opacity-50 disabled:cursor-not-allowed
+           flex items-center justify-center gap-2 min-h-[48px];
+  }
+
+  .btn-ghost {
+    @apply bg-slate-800 hover:bg-slate-700 active:bg-slate-900
+           text-slate-200 font-medium rounded-xl px-4 py-2
+           transition-all duration-200 ease-out
+           focus:outline-none focus:ring-2 focus:ring-slate-500
+           flex items-center justify-center gap-2 min-h-[44px];
+  }
+
+  .btn-danger {
+    @apply bg-red-600 hover:bg-red-500 active:bg-red-700
+           text-white font-semibold rounded-xl px-5 py-3
+           transition-all duration-200 ease-out
+           focus:outline-none focus:ring-2 focus:ring-red-400
+           flex items-center justify-center gap-2 min-h-[48px];
+  }
+
+  .card {
+    @apply bg-slate-900 border border-slate-800 rounded-2xl;
+  }
+
+  .input-field {
+    @apply w-full bg-slate-800 border border-slate-700
+           text-white placeholder-slate-500
+           rounded-xl px-4 py-3 text-sm
+           focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent
+           transition-all duration-200 min-h-[48px];
+  }
+
+  .attendance-btn-present {
+    @apply w-12 h-12 rounded-xl flex items-center justify-center
+           bg-emerald-500 text-white
+           transition-all duration-200 ease-out active:scale-90;
+  }
+
+  .attendance-btn-absent {
+    @apply w-12 h-12 rounded-xl flex items-center justify-center
+           bg-slate-800 border-2 border-slate-700 text-slate-500
+           transition-all duration-200 ease-out
+           hover:border-slate-500 hover:text-slate-300
+           active:scale-90;
+  }
+
+  .badge-synced {
+    @apply inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium
+           bg-emerald-900/50 text-emerald-400 border border-emerald-800;
+  }
+
+  .badge-local {
+    @apply inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium
+           bg-amber-900/50 text-amber-400 border border-amber-800;
+  }
+
+  .badge-syncing {
+    @apply inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium
+           bg-blue-900/50 text-blue-400 border border-blue-800;
+  }
+
+  .bottom-nav-item {
+    @apply flex flex-col items-center gap-1 py-2 px-6
+           text-slate-500 transition-all duration-200;
+  }
+
+  .bottom-nav-item.active {
+    @apply text-indigo-400;
+  }
+}
+
+/* ─── Animations ─────────────────────────────────────────────────────── */
+@keyframes slideUp {
+  from { transform: translateY(20px); opacity: 0; }
+  to   { transform: translateY(0);    opacity: 1; }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.animate-slide-up {
+  animation: slideUp 0.1s ease-out;
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.07s ease-out;
+}
+
+/* ─── Modal Backdrop ─────────────────────────────────────────────────── */
+.modal-backdrop {
+  @apply fixed inset-0 z-50 flex items-end sm:items-center justify-center
+         bg-black/70 backdrop-blur-sm;
+  animation: fadeIn 0.07s ease-out;
+}
+
+.modal-panel {
+  @apply w-full max-w-sm mx-4 mb-8 sm:mb-0 bg-slate-900 border border-slate-800 rounded-2xl p-6;
+  animation: slideUp 0.1s ease-out;
+}
+
+/* ─── Toggle Switch ──────────────────────────────────────────────────── */
+.toggle-switch {
+  @apply relative inline-flex h-7 w-12 cursor-pointer rounded-full
+         transition-colors duration-200 ease-out;
+}
+
+.toggle-switch input {
+  @apply sr-only;
+}
+
+.toggle-thumb {
+  @apply absolute top-0.5 left-0.5 h-6 w-6 rounded-full bg-white shadow
+         transition-transform duration-200 ease-out;
+}
+
+.toggle-switch.on { @apply bg-indigo-600; }
+.toggle-switch.off { @apply bg-slate-700; }
+.toggle-switch.on .toggle-thumb { transform: translateX(20px); }

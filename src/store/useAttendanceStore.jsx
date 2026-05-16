@@ -1,0 +1,397 @@
+import React, { createContext, useContext, useEffect, useReducer, useCallback, useRef } from 'react';
+import {
+  fetchStudents,
+  fetchExams,
+  fetchAttendance,
+  upsertAttendance,
+  deleteAttendance,
+  insertExam,
+  updateExamActive,
+  insertGuestStudent,
+  deleteStudent,
+} from '../lib/supabase';
+import {
+  loadAttendanceMap,
+  saveAttendanceMap,
+  getAttendanceKey,
+  loadPendingDeletes,
+  savePendingDeletes,
+  loadPendingGuests,
+  savePendingGuests,
+  clearPending,
+} from '../lib/localStorage';
+
+// ─── Initial State ────────────────────────────────────────────────────────────
+const initialState = {
+  students:      [],
+  /**
+   * students array contains:
+   *   - Remote synced students: { id: number, name, surname, is_guest: boolean }
+   *   - Pending local guests:   { id: string (UUID), name, surname, is_guest: true, _isPending: true }
+   *
+   * The attendanceMap uses the student's id (number or UUID string) as the key prefix.
+   */
+  exams:         [],
+  attendanceMap: {},  // { "studentId:examId": true }
+  searchQuery:   '',
+  syncStatus:    'synced',
+  loading:       true,
+  error:         null,
+};
+
+// ─── Reducer ──────────────────────────────────────────────────────────────────
+function reducer(state, action) {
+  switch (action.type) {
+
+    case 'SET_INIT_DATA':
+      return {
+        ...state,
+        students:      action.students,
+        exams:         action.exams,
+        attendanceMap: action.attendanceMap,
+        loading:       false,
+        syncStatus:    action.hasPending ? 'local' : 'synced',
+      };
+
+    case 'SET_SEARCH':
+      return { ...state, searchQuery: action.query };
+
+    case 'TOGGLE_ATTENDANCE': {
+      const { studentId, examId } = action;
+      const key = getAttendanceKey(studentId, examId);
+      const newMap = { ...state.attendanceMap };
+      if (newMap[key]) {
+        delete newMap[key];
+      } else {
+        newMap[key] = true;
+      }
+      return { ...state, attendanceMap: newMap, syncStatus: 'local' };
+    }
+
+    case 'ADD_GUEST_STUDENT': {
+      // Add as a pending local student with UUID id
+      const newStudent = {
+        id:         action._localId,
+        name:       action.name,
+        surname:    action.surname,
+        is_guest:   true,
+        _isPending: true,
+      };
+      const key = getAttendanceKey(action._localId, action.examId);
+      return {
+        ...state,
+        students:      [...state.students, newStudent],
+        attendanceMap: { ...state.attendanceMap, [key]: true },
+        syncStatus:    'local',
+      };
+    }
+
+    case 'REMOVE_STUDENT': {
+      // Remove student and all their attendance entries
+      const newStudents = state.students.filter(s => String(s.id) !== String(action.studentId));
+      const newMap = { ...state.attendanceMap };
+      Object.keys(newMap).forEach(key => {
+        if (key.startsWith(`${action.studentId}:`)) delete newMap[key];
+      });
+      return { ...state, students: newStudents, attendanceMap: newMap, syncStatus: 'local' };
+    }
+
+    case 'SYNC_COMPLETE': {
+      // Replace pending guest students with their real DB rows
+      // and remap their attendance keys
+      const localIdToReal = Object.fromEntries(
+        action.insertedGuests.map(ig => [ig._localId, ig.student])
+      );
+      const newStudents = state.students.map(s => {
+        const real = localIdToReal[s.id];
+        return real ? { ...real } : s;
+      });
+      return {
+        ...state,
+        students:      newStudents,
+        attendanceMap: action.newAttendanceMap,
+        syncStatus:    'synced',
+      };
+    }
+
+    case 'SET_SYNC_STATUS':
+      return { ...state, syncStatus: action.status };
+
+    case 'ADD_EXAM':
+      return { ...state, exams: [...state.exams, action.exam] };
+
+    case 'UPDATE_EXAM_ACTIVE':
+      return {
+        ...state,
+        exams: state.exams.map(e =>
+          e.id === action.id ? { ...e, is_active: action.is_active } : e
+        ),
+      };
+
+    default:
+      return state;
+  }
+}
+
+// ─── Context ──────────────────────────────────────────────────────────────────
+const AttendanceContext = createContext(null);
+
+export function AttendanceProvider({ children }) {
+  const [state, dispatch] = useReducer(reducer, initialState);
+
+  // Keep ref to latest students for callbacks that capture state
+  const studentsRef = useRef(state.students);
+  useEffect(() => { studentsRef.current = state.students; }, [state.students]);
+
+  // ── Bootstrap: localStorage first, then Supabase merge ──────────────────
+  useEffect(() => {
+    async function init() {
+      const localMap     = loadAttendanceMap();
+      const pendingDels  = loadPendingDeletes();
+      const pendingGuests = loadPendingGuests();
+
+      // Reconstruct pending guest students as local student objects
+      const localGuestStudents = pendingGuests.map(pg => ({
+        id:         pg._localId,
+        name:       pg.name,
+        surname:    pg.surname,
+        is_guest:   true,
+        _isPending: true,
+      }));
+
+      try {
+        const [remoteStudents, exams, remoteAttendance] = await Promise.all([
+          fetchStudents(),
+          fetchExams(),
+          fetchAttendance(),
+        ]);
+
+        // Build remote attendance map
+        const remoteMap = {};
+        remoteAttendance.forEach(a => {
+          remoteMap[getAttendanceKey(a.student_id, a.exam_id)] = true;
+        });
+
+        // Merge: local overrides remote (handles offline changes)
+        const mergedMap = { ...remoteMap, ...localMap };
+
+        // Apply pending deletes
+        pendingDels.forEach(({ student_id, exam_id }) => {
+          delete mergedMap[getAttendanceKey(student_id, exam_id)];
+        });
+
+        // Students: remote (authoritative for synced) + pending local guests
+        // Avoid duplicating pending guests that may already have been synced
+        const remoteIds = new Set(remoteStudents.map(s => s.id));
+        const allStudents = [...remoteStudents, ...localGuestStudents];
+
+        const hasPending = pendingDels.length > 0 || pendingGuests.length > 0;
+
+        dispatch({
+          type: 'SET_INIT_DATA',
+          students:      allStudents,
+          exams,
+          attendanceMap: mergedMap,
+          hasPending,
+        });
+
+        saveAttendanceMap(mergedMap);
+
+      } catch (err) {
+        console.error('Supabase init failed, using localStorage fallback:', err);
+        // Offline: show only pending local data
+        dispatch({
+          type: 'SET_INIT_DATA',
+          students:      localGuestStudents,
+          exams:         [],
+          attendanceMap: localMap,
+          hasPending:    pendingDels.length > 0 || pendingGuests.length > 0,
+        });
+      }
+    }
+
+    init();
+  }, []);
+
+  // ── Persist attendance map to localStorage on every change ───────────────
+  useEffect(() => {
+    if (!state.loading) {
+      saveAttendanceMap(state.attendanceMap);
+    }
+  }, [state.attendanceMap, state.loading]);
+
+  // ── Toggle attendance ─────────────────────────────────────────────────────
+  const toggleAttendance = useCallback((studentId, examId) => {
+    const key = getAttendanceKey(studentId, examId);
+    const currentMap = loadAttendanceMap();
+
+    if (currentMap[key]) {
+      // Present → removing → track as pending delete (only for synced/integer ids)
+      const isInteger = !isNaN(Number(studentId));
+      if (isInteger) {
+        const dels = loadPendingDeletes();
+        const alreadyQueued = dels.some(
+          d => String(d.student_id) === String(studentId) && String(d.exam_id) === String(examId)
+        );
+        if (!alreadyQueued) {
+          savePendingDeletes([...dels, { student_id: Number(studentId), exam_id: Number(examId) }]);
+        }
+      }
+    } else {
+      // Absent → marking present → remove from pending deletes if it was there
+      const dels = loadPendingDeletes();
+      savePendingDeletes(dels.filter(
+        d => !(String(d.student_id) === String(studentId) && String(d.exam_id) === String(examId))
+      ));
+    }
+
+    dispatch({ type: 'TOGGLE_ATTENDANCE', studentId, examId });
+  }, []);
+
+  // ── Add Guest Student (local-first, auto-attendance) ─────────────────────
+  const addGuest = useCallback((name, surname, examId) => {
+    const _localId = crypto.randomUUID();
+    const examIdNum = Number(examId);
+
+    // Persist to localStorage
+    const existing = loadPendingGuests();
+    savePendingGuests([...existing, { _localId, name, surname, exam_id: examIdNum }]);
+
+    dispatch({ type: 'ADD_GUEST_STUDENT', _localId, name, surname, examId: examIdNum });
+  }, []);
+
+  // ── Remove a guest student ────────────────────────────────────────────────
+  const removeGuest = useCallback(async (studentId) => {
+    const student = studentsRef.current.find(s => String(s.id) === String(studentId));
+    if (!student?.is_guest) return;
+
+    if (student._isPending) {
+      // Never synced — just remove from localStorage
+      const pending = loadPendingGuests();
+      savePendingGuests(pending.filter(g => g._localId !== studentId));
+    } else {
+      // In Supabase — delete (CASCADE removes attendance too)
+      try {
+        await deleteStudent(Number(studentId));
+      } catch (e) {
+        console.error('Failed to delete guest student:', e);
+      }
+    }
+
+    dispatch({ type: 'REMOVE_STUDENT', studentId });
+  }, []);
+
+  // ── Kaydet: bulk sync to Supabase ─────────────────────────────────────────
+  const syncToSupabase = useCallback(async () => {
+    dispatch({ type: 'SET_SYNC_STATUS', status: 'syncing' });
+    try {
+      // 1. Execute pending attendance deletes
+      const pendingDels = loadPendingDeletes();
+      for (const { student_id, exam_id } of pendingDels) {
+        await deleteAttendance(Number(student_id), Number(exam_id));
+      }
+
+      // 2. Get pending guests (to exclude their UUID keys from attendance upsert)
+      const pendingGuests = loadPendingGuests();
+      const pendingLocalIds = new Set(pendingGuests.map(g => g._localId));
+
+      // 3. Upsert attendance for all SYNCED students (integer ids only)
+      const regularRows = Object.keys(state.attendanceMap)
+        .filter(key => {
+          const [sid] = key.split(':');
+          return !pendingLocalIds.has(sid); // skip UUID keys for pending guests
+        })
+        .map(key => {
+          const [sid, eid] = key.split(':');
+          return { student_id: Number(sid), exam_id: Number(eid) };
+        });
+
+      await upsertAttendance(regularRows);
+
+      // 4. Insert each pending guest student → auto-create their attendance
+      const newMap = { ...state.attendanceMap };
+      const insertedGuests = [];
+
+      for (const pg of pendingGuests) {
+        // Insert student with is_guest = true
+        const newStudent = await insertGuestStudent(pg.name, pg.surname);
+
+        // Insert their pre-selected exam attendance
+        await upsertAttendance([{ student_id: newStudent.id, exam_id: Number(pg.exam_id) }]);
+
+        // Remap attendance key: UUID → real SERIAL id
+        const oldKey = getAttendanceKey(pg._localId, pg.exam_id);
+        const newKey = getAttendanceKey(newStudent.id, pg.exam_id);
+        if (newMap[oldKey]) {
+          newMap[newKey] = true;
+          delete newMap[oldKey];
+        }
+
+        insertedGuests.push({ _localId: pg._localId, student: newStudent });
+      }
+
+      clearPending();
+      saveAttendanceMap(newMap);
+
+      dispatch({ type: 'SYNC_COMPLETE', newAttendanceMap: newMap, insertedGuests });
+
+    } catch (err) {
+      console.error('Sync failed:', err);
+      dispatch({ type: 'SET_SYNC_STATUS', status: 'error' });
+    }
+  }, [state.attendanceMap]);
+
+  // ── Exam management ───────────────────────────────────────────────────────
+  const addExam = useCallback(async (examName) => {
+    const exam = await insertExam(examName);
+    dispatch({ type: 'ADD_EXAM', exam });
+    return exam;
+  }, []);
+
+  const toggleExamActive = useCallback(async (id, is_active) => {
+    await updateExamActive(id, is_active);
+    dispatch({ type: 'UPDATE_EXAM_ACTIVE', id, is_active });
+  }, []);
+
+  const setSearch = useCallback((query) => {
+    dispatch({ type: 'SET_SEARCH', query });
+  }, []);
+
+  // ── Derived values ────────────────────────────────────────────────────────
+  // filteredStudents includes ALL students (regular + guests) filtered by search
+  const filteredStudents = state.students.filter(s => {
+    if (!state.searchQuery.trim()) return true;
+    const q = state.searchQuery.toLowerCase();
+    return (
+      s.name.toLowerCase().includes(q) ||
+      s.surname.toLowerCase().includes(q)
+    );
+  });
+
+  const activeExams = state.exams.filter(e => e.is_active);
+
+  const value = {
+    ...state,
+    filteredStudents,
+    activeExams,
+    toggleAttendance,
+    syncToSupabase,
+    addGuest,
+    removeGuest,
+    addExam,
+    toggleExamActive,
+    setSearch,
+  };
+
+  return (
+    <AttendanceContext.Provider value={value}>
+      {children}
+    </AttendanceContext.Provider>
+  );
+}
+
+export function useAttendance() {
+  const ctx = useContext(AttendanceContext);
+  if (!ctx) throw new Error('useAttendance must be used inside AttendanceProvider');
+  return ctx;
+}
