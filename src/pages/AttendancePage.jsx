@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { Search, UserPlus, Download, Save, X, Check, Trash2, Loader2, Undo } from 'lucide-react';
+import { Search, UserPlus, Download, Save, X, Check, Trash2, Loader2, Undo, CornerUpLeft } from 'lucide-react';
 import { useAttendance } from '../store/useAttendanceStore';
 import { getAttendanceKey } from '../lib/localStorage';
 import { exportToExcel } from '../lib/exportExcel';
@@ -19,11 +19,24 @@ export default function AttendancePage() {
   const [exporting,          setExporting]          = useState(false);
   const [pendingDeleteKey,   setPendingDeleteKey]   = useState(null);
 
-  // Auto-clear: when user blurs the search box and later refocuses, start fresh
+  // Task 12: track last search query for undo
+  const [lastSearchQuery, setLastSearchQuery] = useState('');
+
+  // Task 2: ref to re-focus the search input after toggle
+  const searchInputRef = useRef(null);
+
+  // Used to avoid clearing search on the very next focus after a blur
   const shouldClearOnFocus = useRef(false);
   const deleteTimeoutRef   = useRef(null);
 
-  const handleToggle = (student, exam) => {
+  // e is passed from the toggle button click to allow e.preventDefault()
+  const handleToggle = (student, exam, e) => {
+    // Task 2: Prevent the button from stealing focus from the search input.
+    // Calling preventDefault() on the mousedown/touchstart event stops the
+    // browser from blurring the currently-focused element (our search box),
+    // keeping the mobile keyboard visible.
+    e?.preventDefault();
+
     const key = getAttendanceKey(student.id, exam.id);
     const isMarked = !!attendanceMap[key];
     const isSaved  = !!dbAttendanceMap[key];
@@ -50,6 +63,18 @@ export default function AttendancePage() {
         toggleAttendance(student.id, exam.id);
       }
     }
+
+    // Task 12: clear search immediately and save it for undo
+    if (searchQuery) {
+      setLastSearchQuery(searchQuery);
+      setSearch('');
+      shouldClearOnFocus.current = false;
+    }
+
+    // Task 2: Synchronous focus (no rAF) — the keyboard never closes because
+    // preventDefault() above already blocked the blur. This call just ensures
+    // focus is confirmed on the input after React's state update.
+    searchInputRef.current?.focus();
   };
 
 
@@ -86,12 +111,12 @@ export default function AttendancePage() {
   }
 
   return (
-    <div className="h-full flex flex-col bg-slate-950 overflow-hidden">
+    <div className="fixed inset-0 flex flex-col bg-slate-950 overflow-hidden">
 
       {/* ═══════════════════════════════════════════════
           HEADER — pinned, never scrolls
       ═══════════════════════════════════════════════ */}
-      <header className="flex-shrink-0 bg-slate-950 border-b border-slate-800 px-3 pt-3 pb-2 space-y-2">
+      <header className="flex-shrink-0 bg-slate-950 border-b border-slate-800 px-3 pb-2 space-y-2 pt-[calc(env(safe-area-inset-top,0px)+0.75rem)]">
 
         {/* Title row */}
         <div className="flex items-center justify-between gap-2">
@@ -129,14 +154,19 @@ export default function AttendancePage() {
           </div>
         </div>
 
-        {/* Search bar */}
+        {/* Search bar — Task 2, 12 */}
         <div className="relative">
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
           <input
+            ref={searchInputRef}
             id="search-students"
             type="text"
             value={searchQuery}
-            onChange={e => setSearch(e.target.value)}
+            onChange={e => {
+              setSearch(e.target.value);
+              // If user starts typing again, forget the last search
+              if (e.target.value) setLastSearchQuery('');
+            }}
             onBlur={() => {
               // Mark that next focus should clear the field
               if (searchQuery.trim()) shouldClearOnFocus.current = true;
@@ -147,21 +177,45 @@ export default function AttendancePage() {
                 setSearch('');
               }
             }}
-            placeholder="Öğrenci ara... (misafirler dahil)"
-            className="input-field pl-9 pr-9 text-sm"
+            placeholder="Öğrenci ara..."
+            // Task 12: always reserve right padding for the icon slot so
+            // placeholder text never overlaps the X or undo button.
+            className="input-field pl-9 pr-10 text-sm"
           />
+
+          {/* X button when there's active search */}
           {searchQuery && (
             <button
+              onMouseDown={(e) => e.preventDefault()}
               onClick={(e) => {
                 e.preventDefault();
                 e.stopPropagation();
                 setSearch('');
                 shouldClearOnFocus.current = false;
+                searchInputRef.current?.focus();
               }}
               className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300"
               aria-label="Aramayı temizle"
             >
               <X size={14} />
+            </button>
+          )}
+
+          {/* Task 12: Undo button when search was just cleared by toggle */}
+          {!searchQuery && lastSearchQuery && (
+            <button
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => {
+                setSearch(lastSearchQuery);
+                setLastSearchQuery('');
+                shouldClearOnFocus.current = false;
+                searchInputRef.current?.focus();
+              }}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-indigo-400 hover:text-indigo-300 transition-colors"
+              aria-label="Aramayı geri al"
+              title={`"${lastSearchQuery}" aramasına geri dön`}
+            >
+              <CornerUpLeft size={14} />
             </button>
           )}
         </div>
@@ -171,7 +225,7 @@ export default function AttendancePage() {
           MAIN — flex-1, only this section scrolls
       ═══════════════════════════════════════════════ */}
       <main className="flex-1 overflow-hidden">
-        <div className="h-full overflow-auto">
+        <div className="h-full overflow-auto pb-[60vh]">
 
           {filteredStudents.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-full gap-3 pb-12">
@@ -183,6 +237,16 @@ export default function AttendancePage() {
                   ? `"${searchQuery}" ile eşleşen öğrenci yok`
                   : 'Henüz öğrenci yok'}
               </p>
+              {/* Task 6: show "Add Student" hint when searching with no results */}
+              {searchQuery && (
+                <button
+                  onClick={() => setShowGuestModal(true)}
+                  className="flex items-center gap-2 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium transition-colors"
+                >
+                  <UserPlus size={15} />
+                  Öğrenci Ekle
+                </button>
+              )}
             </div>
           ) : (
             /*
@@ -244,46 +308,44 @@ export default function AttendancePage() {
                     })}
                   />
                 ))}
+                {/* Task 11: bottom padding row so last student isn't hidden under the footer/keyboard */}
+                <tr aria-hidden="true">
+                  <td colSpan={activeExams.length + 2} className="h-32" />
+                </tr>
               </tbody>
             </table>
           )}
         </div>
       </main>
 
-      {/* ═══════════════════════════════════════════════
-          FOOTER — pinned, never scrolls
-      ═══════════════════════════════════════════════ */}
-      <footer
-        className="flex-shrink-0 bg-slate-950 border-t border-slate-800 px-4 py-3"
-        style={{ paddingBottom: 'calc(0.75rem + env(safe-area-inset-bottom, 0px))' }}
-      >
-        <div className="flex items-center gap-3">
-          <div className="flex-1 min-w-0">
-            <SyncStatus status={syncStatus} />
-          </div>
-          <div className="flex gap-2">
-            {syncStatus === 'local' && (
+      {/* ── Floating Save/Sync Pill ── */}
+      {syncStatus !== 'synced' && (
+        <div className="absolute bottom-[calc(env(safe-area-inset-bottom,0px)+1.5rem)] left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 p-1.5 pr-2 rounded-full bg-slate-900/90 backdrop-blur-md border border-slate-700/80 shadow-[0_8px_30px_rgb(0,0,0,0.5)] animate-slide-up">
+          <SyncStatus status={syncStatus} />
+          
+          {syncStatus === 'local' && (
+            <div className="flex items-center gap-1.5 pl-2 border-l border-slate-700/60">
               <button
                 id="discard-btn"
                 onClick={() => setConfirmDiscard(true)}
-                className="btn-ghost px-3 sm:px-4 flex-shrink-0 text-red-400 hover:text-red-300 hover:bg-red-900/30"
+                className="w-8 h-8 rounded-full flex items-center justify-center text-red-400 hover:bg-red-500/20 transition-colors"
+                title="Vazgeç"
               >
-                <Undo size={15} />
-                <span className="hidden sm:inline">Vazgeç</span>
+                <Undo size={14} />
               </button>
-            )}
-            <button
-              id="save-btn"
-              onClick={syncToSupabase}
-              disabled={syncStatus === 'syncing' || syncStatus === 'synced'}
-              className="btn-primary px-4 sm:px-5 flex-shrink-0"
-            >
-              <Save size={15} />
-              Kaydet
-            </button>
-          </div>
+              <button
+                id="save-btn"
+                onClick={syncToSupabase}
+                className="flex items-center gap-1.5 px-3 h-8 rounded-full bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold transition-colors shadow-lg shadow-indigo-900/20"
+                title="Kaydet"
+              >
+                <Save size={13} />
+                <span>Kaydet</span>
+              </button>
+            </div>
+          )}
         </div>
-      </footer>
+      )}
 
       {/* ═══════════════════════════════════════════════
           MODALS
@@ -344,13 +406,21 @@ export default function AttendancePage() {
         </div>
       )}
 
-      {showGuestModal && <AddGuestModal onClose={() => setShowGuestModal(false)} />}
+      {/* Task 6: pass searchQuery so the modal can pre-fill name/surname */}
+      {showGuestModal && (
+        <AddGuestModal
+          onClose={() => setShowGuestModal(false)}
+          initialQuery={searchQuery}
+        />
+      )}
     </div>
   );
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
    STUDENT ROW — ultra-compact, zebra-striped
+   ⚠️ Scroll-safety: toggle buttons use active:scale-90 CSS only.
+      No pointer-event overrides. The table container handles scroll.
 ═══════════════════════════════════════════════════════════════════════════ */
 function StudentRow({ student, isEven, activeExams, attendanceMap, dbAttendanceMap, pendingDeleteKey, onToggle, onRemoveGuest }) {
   const isGuest   = !!student.is_guest;
@@ -414,7 +484,7 @@ function StudentRow({ student, isEven, activeExams, attendanceMap, dbAttendanceM
             btnClass = 'bg-amber-500 text-white shadow-md shadow-amber-900/50';
             Icon = <Check size={16} strokeWidth={2.5} />;
           } else if (isPendingDelete) {
-            // Pending Delete (Red)
+            // Pending Delete (Red) — two-step confirm preserved
             btnClass = 'bg-red-500 text-white shadow-md shadow-red-900/50 animate-pulse';
             Icon = <X size={16} strokeWidth={3} />;
           } else {
@@ -431,7 +501,8 @@ function StudentRow({ student, isEven, activeExams, attendanceMap, dbAttendanceM
           >
             <button
               id={`toggle-${student.id}-${exam.id}`}
-              onClick={() => onToggle(student, exam)}
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={(e) => onToggle(student, exam, e)}
               aria-label={`${exam.exam_name}: ${isMarked ? 'Katıldı' : 'Katılmadı'}`}
               aria-pressed={isMarked}
               title={`${student.name} ${student.surname} — ${exam.exam_name}`}

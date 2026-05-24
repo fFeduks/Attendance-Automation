@@ -1,4 +1,23 @@
-import * as XLSX from 'xlsx';
+// Task 8: Use xlsx-js-style (drop-in replacement for xlsx) for cell border support.
+import * as XLSX from 'xlsx-js-style';
+
+// ─── Border style applied to every data cell ─────────────────────────────────
+const THIN_BORDER = {
+  top:    { style: 'thin', color: { rgb: 'AAAAAA' } },
+  bottom: { style: 'thin', color: { rgb: 'AAAAAA' } },
+  left:   { style: 'thin', color: { rgb: 'AAAAAA' } },
+  right:  { style: 'thin', color: { rgb: 'AAAAAA' } },
+};
+
+const HEADER_STYLE = {
+  font:   { bold: true },
+  fill:   { fgColor: { rgb: '1E293B' } },  // slate-800 background
+  border: THIN_BORDER,
+};
+
+const CELL_STYLE = {
+  border: THIN_BORDER,
+};
 
 /**
  * Build a single worksheet from a list of students.
@@ -38,12 +57,19 @@ function buildSheet(students, sortedExams, attendanceMap) {
     ...sortedExams.map(() => ({ wch: 14 })),
   ];
 
-  // Bold the header row
+  // Task 8: Apply borders to ALL cells in the data range
   const range = XLSX.utils.decode_range(ws['!ref'] || 'A1');
-  for (let col = range.s.c; col <= range.e.c; col++) {
-    const cellRef = XLSX.utils.encode_cell({ r: 0, c: col });
-    if (!ws[cellRef]) continue;
-    ws[cellRef].s = { font: { bold: true } };
+
+  for (let row = range.s.r; row <= range.e.r; row++) {
+    for (let col = range.s.c; col <= range.e.c; col++) {
+      const cellRef = XLSX.utils.encode_cell({ r: row, c: col });
+      if (!ws[cellRef]) {
+        // Create empty cell so we can style it
+        ws[cellRef] = { v: '', t: 's' };
+      }
+      // Header row gets bold + filled background; data rows get plain border
+      ws[cellRef].s = row === 0 ? HEADER_STYLE : CELL_STYLE;
+    }
   }
 
   return ws;
@@ -56,7 +82,7 @@ function buildSheet(students, sortedExams, attendanceMap) {
  * Sheet 2 "Misafirler" — students where is_guest = true (omitted if empty)
  *
  * Columns: No | Adı | Soyadı | [active exam 1] | [active exam 2] | ...
- *   - "V"  if the student has an attendance record for that exam
+ *   - "+"  if the student has an attendance record for that exam
  *   - ""   (blank) if absent — never "0", "X", or any other text
  *
  * @param {Array}  students      - ALL students from state (including pending)
@@ -95,7 +121,6 @@ export async function exportToExcel(students, activeExams, attendanceMap) {
   }
 
   // ── Download ─────────────────────────────────────────────────────────────
-  // Simple, robust: XLSX.writeFile handles everything correctly in Chrome & mobile.
-  // Filename is strictly ASCII with no special characters, spaces, or locale-specific chars.
-  XLSX.writeFile(wb, 'Yoklama_Listesi.xlsx');
+  // Use writeFile with cellStyles: true so xlsx-js-style applies the .s properties.
+  XLSX.writeFile(wb, 'Yoklama_Listesi.xlsx', { cellStyles: true });
 }

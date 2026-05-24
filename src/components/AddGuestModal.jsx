@@ -1,13 +1,63 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { X, UserPlus, CheckCircle } from 'lucide-react';
 import { useAttendance } from '../store/useAttendanceStore';
 
-export default function AddGuestModal({ onClose }) {
+// localStorage key for remembering the last selected exam
+const LAST_EXAM_KEY = 'attendance_last_exam_id';
+
+/**
+ * AddGuestModal
+ * @param {Function} onClose       - close callback
+ * @param {string}   initialQuery  - Task 6: pre-fill name/surname from search query
+ */
+export default function AddGuestModal({ onClose, initialQuery = '' }) {
   const { activeExams, addGuest } = useAttendance();
 
-  const [name, setName]       = useState('');
-  const [surname, setSurname] = useState('');
-  const [examId, setExamId]   = useState(activeExams[0]?.id ?? '');
+  // ── Task 6: Parse initialQuery into name/surname ────────────────────────
+  // Split by spaces; last word → surname, rest → name
+  // e.g. "Ahmet Yılmaz Can" → name: "Ahmet Yılmaz", surname: "Can"
+  const parseQuery = (query) => {
+    const parts = query.trim().split(/\s+/).filter(Boolean);
+    if (parts.length === 0) return { parsedName: '', parsedSurname: '' };
+    if (parts.length === 1) return { parsedName: parts[0], parsedSurname: '' };
+    const parsedSurname = parts[parts.length - 1];
+    const parsedName    = parts.slice(0, -1).join(' ');
+    return { parsedName, parsedSurname };
+  };
+
+  const { parsedName, parsedSurname } = parseQuery(initialQuery);
+
+  const [name,    setName]    = useState(parsedName);
+  const [surname, setSurname] = useState(parsedSurname);
+
+  // ── Task 7: Remember last selected exam ────────────────────────────────
+  const getInitialExamId = () => {
+    if (activeExams.length === 0) return '';
+    const stored = localStorage.getItem(LAST_EXAM_KEY);
+    if (stored) {
+      const storedNum = Number(stored);
+      const found = activeExams.find(e => e.id === storedNum);
+      if (found) return String(found.id);
+    }
+    return String(activeExams[0].id);
+  };
+
+  const [examId, setExamId] = useState(getInitialExamId);
+
+  // Keep examId in sync if activeExams loads after mount (edge case)
+  useEffect(() => {
+    if (!examId && activeExams.length > 0) {
+      setExamId(getInitialExamId());
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeExams]);
+
+  const handleExamChange = (e) => {
+    const val = e.target.value;
+    setExamId(val);
+    // Task 7: persist selection
+    localStorage.setItem(LAST_EXAM_KEY, val);
+  };
 
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -15,6 +65,8 @@ export default function AddGuestModal({ onClose }) {
     // Normalize to Turkish uppercase before saving
     const formattedName    = name.trim().toLocaleUpperCase('tr-TR');
     const formattedSurname = surname.trim().toLocaleUpperCase('tr-TR');
+    // Also persist the chosen exam for next time
+    localStorage.setItem(LAST_EXAM_KEY, examId);
     // addGuest handles both inserting the student and marking attendance
     addGuest(formattedName, formattedSurname, examId);
     onClose();
@@ -85,7 +137,7 @@ export default function AddGuestModal({ onClose }) {
               <select
                 id="guest-exam"
                 value={examId}
-                onChange={e => setExamId(e.target.value)}
+                onChange={handleExamChange}
                 className="input-field appearance-none"
                 required
               >

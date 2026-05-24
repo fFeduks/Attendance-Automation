@@ -9,6 +9,7 @@ import {
   updateExamActive,
   insertGuestStudent,
   deleteStudent,
+  deleteExamById,
 } from '../lib/supabase';
 import {
   loadAttendanceMap,
@@ -56,14 +57,15 @@ const initialState = {
 
 // ─── Helper to Sort Exams ───────────────────────────────────────────────────────
 function sortExams(exams, orderMap) {
-  // orderMap is an array of exam ids. We sort by indexOf. If not found, put it at the end.
+  // orderMap is an array of exam ids. We sort by indexOf. If not found, put at end.
+  // Task 3: for exams not in the saved order, sort newest-first (b.id - a.id).
   return [...exams].sort((a, b) => {
     const iA = orderMap.indexOf(a.id);
     const iB = orderMap.indexOf(b.id);
     if (iA !== -1 && iB !== -1) return iA - iB;
     if (iA !== -1) return -1;
     if (iB !== -1) return 1;
-    return a.id - b.id; // stable sort for new exams
+    return b.id - a.id; // Task 3: newest-first fallback for unordered exams
   });
 }
 
@@ -150,7 +152,8 @@ function reducer(state, action) {
       return { ...state, syncStatus: action.status };
 
     case 'ADD_EXAM': {
-      const newExams = [...state.exams, action.exam];
+      // Task 3: new exam goes to the front (newest-first)
+      const newExams = [action.exam, ...state.exams];
       saveExamOrder(newExams.map(e => e.id));
       return { ...state, exams: newExams };
     }
@@ -173,6 +176,27 @@ function reducer(state, action) {
           e.id === action.id ? { ...e, is_active: action.is_active } : e
         ),
       };
+
+    // Task 5: permanently remove exam from state
+    case 'DELETE_EXAM': {
+      const remaining = state.exams.filter(e => e.id !== action.id);
+      saveExamOrder(remaining.map(e => e.id));
+      // Also clean up attendance map entries for this exam
+      const newMap = { ...state.attendanceMap };
+      const newDbMap = { ...state.dbAttendanceMap };
+      Object.keys(newMap).forEach(key => {
+        if (key.endsWith(`:${action.id}`)) delete newMap[key];
+      });
+      Object.keys(newDbMap).forEach(key => {
+        if (key.endsWith(`:${action.id}`)) delete newDbMap[key];
+      });
+      return {
+        ...state,
+        exams: remaining,
+        attendanceMap: newMap,
+        dbAttendanceMap: newDbMap,
+      };
+    }
 
     default:
       return state;
@@ -228,7 +252,6 @@ export function AttendanceProvider({ children }) {
 
         // Students: remote (authoritative for synced) + pending local guests
         // Avoid duplicating pending guests that may already have been synced
-        const remoteIds = new Set(remoteStudents.map(s => s.id));
         const allStudents = [...remoteStudents, ...localGuestStudents];
 
         const hasPending = pendingDels.length > 0 || pendingGuests.length > 0;
@@ -443,27 +466,25 @@ export function AttendanceProvider({ children }) {
     dispatch({ type: 'UPDATE_EXAM_ACTIVE', id, is_active });
   }, []);
 
+  // Task 5: permanently delete an exam
+  const deleteExam = useCallback(async (id) => {
+    await deleteExamById(id);
+    dispatch({ type: 'DELETE_EXAM', id });
+  }, []);
+
   const setSearch = useCallback((query) => {
     dispatch({ type: 'SET_SEARCH', query });
   }, []);
 
   // ── Derived values ────────────────────────────────────────────────────────
-  // filteredStudents includes ALL students (regular + guests) filtered by search
-  // Arama için en güvenli Türkçe normalize fonksiyonu
-  const trNormalize = (text) => {
-    if (!text) return '';
-    return text.toLocaleUpperCase('tr-TR');
-  };
-
-  // ── Derived values ────────────────────────────────────────────────────────
+  // Task 1: Multi-word search — combine name + surname, split query by spaces,
+  // every word in the query must match somewhere in the full name.
   const filteredStudents = state.students.filter(s => {
     if (!state.searchQuery.trim()) return true;
 
-    const q = trNormalize(state.searchQuery);
-    return (
-      trNormalize(s.name).includes(q) ||
-      trNormalize(s.surname).includes(q)
-    );
+    const fullName = trNormalize(s.name + ' ' + s.surname);
+    const words = trNormalize(state.searchQuery).split(/\s+/).filter(Boolean);
+    return words.every(word => fullName.includes(word));
   });
 
   const activeExams = state.exams.filter(e => e.is_active);
@@ -479,6 +500,7 @@ export function AttendanceProvider({ children }) {
     addExam,
     reorderExams,
     toggleExamActive,
+    deleteExam,
     setSearch,
     discardChanges,
   };

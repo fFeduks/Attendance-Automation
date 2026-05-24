@@ -43,11 +43,12 @@ export async function deleteStudent(id) {
 }
 
 // ─── Exams ────────────────────────────────────────────────────────────────────
+// Task 3: Order by id DESC so newest exams appear first by default.
 export async function fetchExams() {
   const { data, error } = await supabase
     .from('exams')
-    .select('id, exam_name, is_active')
-    .order('id', { ascending: true });
+    .select('id, exam_name, is_active, created_at')
+    .order('id', { ascending: false });
   if (error) throw error;
   return data;
 }
@@ -68,6 +69,26 @@ export async function updateExamActive(id, is_active) {
     .update({ is_active })
     .eq('id', id);
   if (error) throw error;
+}
+
+/**
+ * Task 5: Permanently delete an exam and all its attendance records.
+ * We delete attendance first to be safe regardless of CASCADE setting.
+ */
+export async function deleteExamById(id) {
+  // Step 1: delete all attendance records for this exam
+  const { error: attErr } = await supabase
+    .from('attendance')
+    .delete()
+    .eq('exam_id', id);
+  if (attErr) throw attErr;
+
+  // Step 2: delete the exam itself
+  const { error: examErr } = await supabase
+    .from('exams')
+    .delete()
+    .eq('id', id);
+  if (examErr) throw examErr;
 }
 
 // ─── Attendance ───────────────────────────────────────────────────────────────
